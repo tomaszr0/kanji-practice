@@ -1,0 +1,378 @@
+<!doctype html>
+<meta charset='utf-8'>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+
+<style>
+    body{
+        overscroll-behavior-y: contain;
+    }
+    canvas{
+        border: 1px gray solid;
+    }
+    .spoiler{
+        background-color:black;
+    }
+    .spoiler:hover{
+        background-color:inherit;
+    }
+    #quiz2{
+        display:none;
+    }
+    #undo,#redo{
+        display:inline-block;
+        font-size:0;margin:16px;
+        height:80px;
+    }
+    #undo{border-right:1px black solid;}
+    #redo{border-left:1px black solid;}
+    .crossed1,.crossed2,.crossed3,.crossed4{
+        margin:0;padding:0;
+        display:inline-block;
+        width:40px;
+        height:50%;
+    }
+    .crossed1{
+        background:
+            linear-gradient(to top right,
+                rgba(0,0,0,0) 0%,
+                rgba(0,0,0,0) calc(50% - .8px),
+                rgba(0,0,0,1) 50%,
+                rgba(0,0,0,0) calc(50% + .8px),
+                rgba(0,0,0,0) 100%);
+    }
+    .crossed2{
+        background:
+            linear-gradient(to top left,
+                rgba(0,0,0,0) 0%,
+                rgba(0,0,0,0) calc(50% - .8px),
+                rgba(0,0,0,1) 50%,
+                rgba(0,0,0,0) calc(50% + .8px),
+                rgba(0,0,0,0) 100%);
+    }
+    .crossed3{
+        background:
+            linear-gradient(to bottom right,
+                rgba(0,0,0,0) 0%,
+                rgba(0,0,0,0) calc(50% - .8px),
+                rgba(0,0,0,1) 50%,
+                rgba(0,0,0,0) calc(50% + .8px),
+                rgba(0,0,0,0) 100%);
+    }
+    .crossed4{
+        background:
+            linear-gradient(to bottom left,
+                rgba(0,0,0,0) 0%,
+                rgba(0,0,0,0) calc(50% - .8px),
+                rgba(0,0,0,1) 50%,
+                rgba(0,0,0,0) calc(50% + .8px),
+                rgba(0,0,0,0) 100%);
+    }
+</style>
+<div id='test'></div>
+<center>
+    <div>Use mouse to draw kanji inside the box. Ctrl+Z to undo. Ctrl+Y to redo. Enter to proceed.</div><button id='zoomOut'>-</button><button id='zoomIn'>+</button> (Will clear drawbox)<br>
+    <div id='strokes'>0 strokes</div>
+    <span id='undo'><span class='crossed3'></span><br><span class='crossed4'></span></span><canvas></canvas><span id='redo'><span class='crossed1'></span><br><span class='crossed2'></span></span><br>
+    <div id='quiz1'>
+        <div>Select groups you want to study:</div><button id='start'>Start</button><input type='checkbox' id='reverse'><label for='reverse'>Reverse</label>
+    </div>
+    <div id='quiz2'>
+        <button id='proceed'>Proceed</button><br><br>
+        <div id='question'></div><br>
+        <button id='cancel'>Cancel</button>
+    </div>
+</center>
+
+<script>
+    // CONFIG
+    if(localStorage.canvasW)
+        cw=ch=localStorage.canvasW;
+    else
+        cw=ch=80; // canvas width and height
+    lw=2.4; // canvas line width
+    // config /
+    
+    // QUIZ CODE
+    var quiz1=document.getElementById('quiz1');
+    var quiz2=document.getElementById('quiz2');
+    var question=document.getElementById('question');
+    var proceedB=document.getElementById('proceed');
+    var resetB=document.getElementById('cancel');
+    var startB=document.getElementById('start');
+    var groups;
+    var reverse=document.getElementById('reverse').checked;
+    
+    // downloading file with questions
+    req=new XMLHttpRequest();
+    req.open('get','questions.txt');
+    req.onreadystatechange=()=>{
+        if(req.response && req.status==200 && req.readyState==4)
+            prepare(req.response);
+    }
+    req.send();
+    
+    // FUNCTIONS
+    function prepare(groupsRaw){
+        // PARSING TEXT FILE
+        groups=[];
+        groupsRaw=groupsRaw.replace(/[\n\t\r]/g,'').split('|');
+        groupsRaw.forEach(groupRaw=>{
+            groups.push([]);
+            if((pos=groupRaw.indexOf('/'))!=-1){
+                groups[groups.length-1].name=groupRaw.substr(0,pos);
+                groupRaw=groupRaw.substr(pos+1);
+            }
+            questionsRaw=groupRaw.split(";");
+            questionsRaw.forEach(questionRaw=>{
+                q=questionRaw.split(':');
+                if(q.length==3) q[0]+=`<br><span class='spoiler'>(${q.splice(1,1)})</span>`;
+                if(q.length!=2) return;
+                if(!q[0].length || !q[1].length) return;
+                groups[groups.length-1].push({q:q[0],a:q[1]});
+            });
+        });
+        // parsing /
+        // APPENDING QUESTIONS TO HTML
+        Object.keys(groups).forEach(function(k){
+            div=document.createElement('div');
+            checkbox=document.createElement('input');
+            checkbox.type='checkbox';
+            checkbox.id=k;
+            div.append(checkbox);
+            label=document.createElement('label');
+            label.setAttribute('for',k);
+            if(groups[k].name)
+                label.innerHTML=groups[k].name;
+            else{
+                str=[];
+                groups[k].forEach(function(question){
+                    str.push(question.a);
+                });
+                label.innerHTML=str.join(',');
+            }
+            label.innerHTML+=` (${groups[k].length})`;
+            div.append(label);
+            quiz1.insertBefore(div,startB);
+        });
+        checkboxes=quiz1.getElementsByTagName('input');
+        // appending questions /
+        
+    }
+    function start(){
+        state=0;
+        currentQuestions=[];
+        Object.keys(checkboxes).forEach(function(k){
+            if(checkboxes[k].id=='reverse') return;
+            if(checkboxes[k].checked)
+                groups[k].forEach(function(question){
+                    if(groups[k].name)
+                        tmp=`<br>(${groups[k].name})`;
+                    else tmp='';
+                    currentQuestions.push({q:question.q+tmp,a:question.a});
+                });
+        });
+        if(!currentQuestions.length) return;
+        proceed();
+        quiz1.style.display='none';
+        quiz2.style.display='block';
+    }
+    function proceed(){
+        if(!state){
+            if(!currentQuestions.length){
+                reset();
+                return;
+            }
+            clear(); currentQuestion=currentQuestions.splice(Math.floor(Math.random()*currentQuestions.length),1)[0];
+            if(reverse){
+                question.style.fontSize='48px';
+                question.innerHTML=currentQuestion.a;
+            }
+            else{
+                question.style.fontSize='inherit';
+                question.innerHTML=currentQuestion.q;
+            }
+            c.width=currentQuestion.a.length*cw;
+            state=1;
+        }
+        else{
+            if(reverse){
+                question.style.fontSize='inherit';
+                question.innerHTML=currentQuestion.q;
+            }
+            else{
+                question.style.fontSize='48px';
+                question.innerHTML=currentQuestion.a;
+            }
+            state=0;
+        }
+    }
+    function reset(){
+        clear();
+        quiz2.style.display='none';
+        quiz1.style.display='block';
+    }
+    // functions /
+    // CONTROLS
+    document.getElementById('reverse').onchange=function(){
+        if(this.checked) reverse=1;
+        else reverse=0;
+    }
+    startB.onclick=start;
+    proceedB.onclick=proceed;
+    resetB.onclick=reset;
+    // controls /
+    // quiz code /
+    
+    
+    
+    // DRAWING CODE
+    var undoB=document.getElementById('undo');
+    var redoB=document.getElementById('redo');
+    var zoomInB=document.getElementById('zoomIn');
+    var zoomOutB=document.getElementById('zoomOut');
+    var c=document.getElementsByTagName('canvas')[0];
+    c.width=cw;
+    c.height=ch;
+    redoB.style.height=undoB.style.height=`${ch}px`;
+    ctx=c.getContext('2d');
+    ctx.lineWidth=lw;
+    cur={x:0,y:0}
+    
+    function clear(){
+        hist=[];
+        histTmp=[];
+        draw();
+    }
+    function redo(){
+        if(!histTmp.length) return;
+        hist.push(histTmp.shift());
+        draw();
+    }
+    function undo(){
+        if(!hist.length) return;
+        histTmp.unshift(hist.pop());
+        draw();
+    }
+    function draw(){
+        ctx.clearRect(0,0,c.width,c.height);
+        ctx.lineWidth=lw;
+        hist.forEach(function(entry){
+            ctx.beginPath();
+            ctx.moveTo(entry[0].x,entry[0].y);
+            entry.forEach(function(coord){
+                ctx.lineTo(coord.x,coord.y);
+            });
+            ctx.stroke();
+        });
+        ctx.lineWidth=lw;
+        strokes.innerHTML=`${hist.length} strokes`;
+    }
+    function updateScale(type){
+        if(type){
+            cw=ch=ch-(-20);
+        }
+        else{
+            if(cw<21) return;
+            cw=ch=ch-20
+        }
+        localStorage.canvasW=cw;
+        if(typeof currentQuestion !='undefined')
+            c.width=cw*currentQuestion.a.length;
+        else
+            c.width=cw;
+        c.height=ch;
+        undoB.style.height=redoB.style.height=`${ch}px`;
+        clear();
+    }
+    function zoomIn(){updateScale(1)}
+    function zoomOut(){updateScale(0)}
+    
+    // EVENTS & CONTROLS
+    var hist=[];
+    var histTmp=[];
+    var strokes=document.getElementById('strokes');
+    var down=0;
+    var entry;
+    undoB.onclick=undo;
+    redoB.onclick=redo;
+    zoomInB.onclick=zoomIn;
+    zoomOutB.onclick=zoomOut;
+    c.ontouchmove=c.onmousemove=e=>{
+        if(e.touches){
+            if(!e.touches.length) return;
+            e=e.touches[0];
+        }
+        cur.x=e.clientX-c.offsetLeft;
+        cur.y=e.clientY-c.offsetTop;
+        if(down){
+            entry.push({x:cur.x,y:cur.y});
+            ctx.lineTo(cur.x,cur.y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(cur.x,cur.y);
+        }
+        e.preventDefault();
+    }
+    c.onmouseout=e=>{
+        if(down){
+            ctx.lineTo(cur.x,cur.y);
+            ctx.stroke();
+            down=0;
+            histTmp=[];
+            hist.push(entry);
+            strokes.innerHTML=`${hist.length} strokes`;
+        }
+    }
+    c.ontouchstart=c.onmousedown=e=>{
+        if(down) return;
+        down=1;
+        ctx.lineWidth=lw;
+        if(e.touches){
+            if(!e.touches.length) return;
+            e=e.touches[0];
+        }
+        cur.x=e.clientX-c.offsetLeft;
+        cur.y=e.clientY-c.offsetTop;
+        entry=[{x:cur.x,y:cur.y}];
+        ctx.beginPath();
+        ctx.moveTo(cur.x,cur.y);
+        e.preventDefault();
+    }
+    c.ontouchend=c.onmouseup=e=>{
+        if(!down) return;
+        down=0;
+        if(entry.length==1) return;
+        histTmp=[];
+        hist.push(entry);
+        strokes.innerHTML=`${hist.length} strokes`;
+        e.preventDefault();
+    }
+    var ctrl=0;
+    window.onkeydown=e=>{ // enter=13, ctrl=17, z=90, y=89
+        switch(e.which){
+            case 13: proceed();return false;break; // this one actually belongs to quiz part
+            case 17: ctrl=1;break;
+            case 89: if(ctrl) redo();break;
+            case 90: if(ctrl) undo();break;
+        }
+    }
+    window.onkeyup=e=>{ // ctrl=17, z=90
+        switch(e.which){
+            case 17: ctrl=0;break;
+        }
+    }
+//    c.ontouchmove=e=>{
+//        cur.x=e.touches[0].clientX-c.offsetLeft;
+//        cur.y=e.touches[0].clientY-c.offsetTop;
+//        if(down){
+//            entry.push({x:cur.x,y:cur.y});
+//            ctx.lineTo(cur.x,cur.y);
+//            ctx.stroke();
+//            ctx.beginPath();
+//            ctx.moveTo(cur.x,cur.y);
+//        }
+//        ev.preventDefault();
+//    }
+    // events & controls /
+    // drawing code /
+</script>
